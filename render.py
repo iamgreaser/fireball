@@ -55,8 +55,9 @@ CLEANUP_OLD_VERTICES = False
 USE_SHADERS = True
 
 # set to True if your GPU can handle it.
-# i found it's not particularly great.
-USE_PHONG_SHADER = False
+# this is the current shader, and it does specular reflection.
+# some stuff will need to be backported to the "gouraud" shader.
+USE_PHONG_SHADER = True
 
 # draw methods:
 # higher overrides lower
@@ -85,7 +86,7 @@ void main()
 {
 	vec4 vec_base = gl_Vertex;
 	vec4 vec_target = gl_ModelViewMatrix*vec_base;
-	vec4 vec_normal = gl_ModelViewMatrix*vec4(gl_Normal,0.0);
+	vec4 vec_normal = gl_ModelViewMatrix*-vec4(gl_Normal,0.0);
 	gl_Position = gl_ProjectionMatrix*vec_target;
 	vec4 vec_delta = vec_target;
 	vec_delta[3] = 0.0;
@@ -93,9 +94,9 @@ void main()
 	//float dist = length(vec3(vec_target));
 	//fog = min(1.0, dist / *** PERCENT F! ***);
 	phong_delta = vec_delta;
-	phong_normal = -vec_normal;
+	phong_normal = vec_normal;
 	phong_target = vec_target;
-	//float diffuse = max(0.0, dot(vec_delta, -vec_normal));
+	//float diffuse = max(0.0, dot(vec_delta, vec_normal));
 	//diffuse *= 6.0/max(6.0,length(vec3(vec_target)));
 	//float diffuse = 1.0;
 	gl_FrontColor = gl_Color;
@@ -113,16 +114,41 @@ varying vec4 phong_target;
 
 void main()
 {
+	// TODO: shift this to a uniform vector
+	vec3 specular_vec = vec3(gl_ModelViewMatrix*-vec4(0.707, 0.707, 0.0, 0.0));
+	
+	//vec3 specular_vec_local = vec3(0.0, 0.0, -1.0);
+	vec3 specular_vec_local = normalize(vec3(phong_delta));
+	
+	float spec_power_local = dot(vec3(0.0, 0.0, -1.0),vec3(phong_delta));
+	spec_power_local = max(0.0, (spec_power_local-0.5)/(1.0-0.5));
+	// acos(0.5) == 60 degrees
+	
 	vec3 col_base = normalize(vec3(gl_Color));
 	float col_intens = length(vec3(gl_Color));
 	//float diffuse = 1.0;
-	float diffuse = max(0.0, dot(phong_delta, phong_normal));
+	float diffuse = max(0.0, spec_power_local*dot(specular_vec_local, vec3(phong_normal)));
 	float dist = length(vec3(phong_target));
-	//diffuse *= 6.0/max(6.0,dist);
+	diffuse *= 6.0/max(6.0,dist);
+	diffuse = min(1.0, diffuse + max(0.0, dot(specular_vec, vec3(phong_normal))));
 	float fog = max(0.0, min(1.0, dist * 2 / %f - 1.0));
 	//float fog = 0.0;
 	
-	gl_FragColor = vec4(col_base*col_intens*(0.97*diffuse + 0.03)*(1.0-fog),gl_Color[3]) + vec4(0.0,0.0,0.15,1.0) * fog;
+	vec3 spec_vec = 2*dot(specular_vec,vec3(phong_normal))*vec3(phong_normal) - specular_vec;
+	vec3 spec_vec_local = 2*dot(specular_vec_local,vec3(phong_normal))*vec3(phong_normal) - specular_vec_local;
+	float specback = max(0.0, dot(spec_vec,normalize(vec3(phong_delta))));
+	float specback2 = spec_power_local*max(0.0, dot(spec_vec_local,specular_vec_local));
+	specback = pow(specback, 20);
+	specback2 = pow(specback2, 20);
+	//specback = 0.0;
+	specback = min(1.0, specback+specback2);
+	
+	gl_FragColor = vec4(
+			(col_base*col_intens*(0.97*diffuse + 0.03)*(1.0-specback)
+				+ vec3(1.0,1.0,1.0)*specback
+			)*(1.0-fog)
+		,gl_Color[3])
+		+ vec4(0.0,0.0,0.15,1.0) * fog;
 	//gl_FragColor = vec4(col_base*col_intens*(1.0-fog),gl_Color[3]) + vec4(0.0,0.0,0.15,1.0) * fog;
 	//gl_FragColor = vec4(col_base*col_intens,gl_Color[3]);
 }
